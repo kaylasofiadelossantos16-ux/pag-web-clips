@@ -19,7 +19,7 @@ config.DATA_DIR.mkdir(parents=True, exist_ok=True)
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
     SessionMiddleware, secret_key=config.SECRET_KEY, session_cookie="clips_session",
-    max_age=60 * 60 * 24 * 7, same_site="lax", https_only=config.COOKIE_SECURE,
+    max_age=60 * 60 * 24 * 7, same_site=config.COOKIE_SAMESITE, https_only=config.COOKIE_SECURE,
 )
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 

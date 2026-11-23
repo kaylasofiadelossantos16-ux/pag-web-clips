@@ -24,6 +24,7 @@ MAX_VIDEO_MINUTES = _int("MAX_VIDEO_MINUTES", 180)
 CLIP_MIN_SECONDS = _int("CLIP_MIN_SECONDS", 20)
 CLIP_MAX_SECONDS = _int("CLIP_MAX_SECONDS", 60)
 SUBTITLE_LANGS = [s.strip() for s in os.getenv("SUBTITLE_LANGS", "es,en").split(",") if s.strip()]
+COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax").lower()
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
 YTDLP_COOKIES_FILE = os.getenv("YTDLP_COOKIES_FILE") or None
 NUM_CLIPS = 5
