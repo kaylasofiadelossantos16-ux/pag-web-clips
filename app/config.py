@@ -16,8 +16,9 @@ def _int(name: str, default: int) -> int:
 
 APP_PASSWORD = os.getenv("APP_PASSWORD", "")
 SECRET_KEY = os.getenv("SECRET_KEY", "")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
 DATA_DIR = Path(os.getenv("DATA_DIR", "data")).resolve()
 MAX_VIDEO_MINUTES = _int("MAX_VIDEO_MINUTES", 180)
 CLIP_MIN_SECONDS = _int("CLIP_MIN_SECONDS", 20)
@@ -30,7 +31,7 @@ NUM_CLIPS = 5
 
 def validate() -> None:
     missing = [n for n, v in [("APP_PASSWORD", APP_PASSWORD), ("SECRET_KEY", SECRET_KEY),
-                              ("ANTHROPIC_API_KEY", ANTHROPIC_API_KEY)] if not v]
+                              ("GEMINI_API_KEY", GEMINI_API_KEY)] if not v]
     if missing:
         sys.exit(f"Faltan variables en .env: {', '.join(missing)} (copia .env.example a .env)")
     if len(SECRET_KEY) < 32:

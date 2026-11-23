@@ -1,12 +1,16 @@
-"""Descarga (yt-dlp) -> análisis (Claude) -> corte vertical (FFmpeg)."""
+"""Descarga (yt-dlp) -> análisis (Gemini) -> corte vertical (FFmpeg)."""
 import json
 import re
 import subprocess
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
-import anthropic
+import numpy as np
 import yt_dlp
+from google import genai
+from google.genai import types
+from pydantic import BaseModel
 
 from . import config
 
@@ -135,29 +139,38 @@ def build_transcript(cues, window: float = 15.0) -> str:
     return "\n".join(out)
 
 
-# ---------- 3. Claude ----------
-_TOOL = {
-    "name": "report_clips",
-    "description": "Devuelve los momentos más virales del video.",
-    "input_schema": {
-        "type": "object",
-        "properties": {"clips": {"type": "array", "items": {
-            "type": "object",
-            "properties": {
-                "start": {"type": "number", "description": "Segundo de inicio"},
-                "end": {"type": "number", "description": "Segundo de fin"},
-                "title": {"type": "string", "description": "Título corto y llamativo"},
-                "reason": {"type": "string", "description": "Por qué es viral (1 frase)"},
-            },
-            "required": ["start", "end", "title", "reason"],
-        }}},
-        "required": ["clips"],
-    },
-}
+# ---------- 2b. Respaldo: transcripción local por audio ----------
+def transcribe_audio(video: Path, workdir: Path) -> list[tuple[float, float, str]]:
+    from faster_whisper import WhisperModel
+
+    # Decodifica con FFmpeg a PCM float32 16 kHz mono (evita depender de PyAV).
+    r = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(video), "-vn", "-ac", "1",
+                        "-ar", "16000", "-f", "f32le", "-"], capture_output=True)
+    if r.returncode != 0 or not r.stdout:
+        raise PipelineError(f"No se pudo extraer el audio: {r.stderr[-200:].decode(errors='ignore')}")
+    audio = np.frombuffer(r.stdout, dtype=np.float32)
+    try:
+        model = WhisperModel(config.WHISPER_MODEL, device="cpu", compute_type="int8")
+        segments, _ = model.transcribe(audio, vad_filter=True)
+        cues = [(s.start, s.end, s.text.strip()) for s in segments if s.text.strip()]
+    except Exception as e:
+        raise PipelineError(f"Falló la transcripción local (Whisper): {_short(e)}")
+    return cues
+
+
+# ---------- 3. Gemini ----------
+FALLBACK_MODELS = ["gemini-3.5-flash", "gemini-3.8-flash", "gemini-3.1-flash-lite"]
+
+
+class Moment(BaseModel):
+    start: float
+    end: float
+    title: str
+    reason: str
 
 
 def find_viral_moments(transcript: str, duration: float) -> list[dict]:
-    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    client = genai.Client(api_key=config.GEMINI_API_KEY)
     system = (
         "Eres un editor experto en contenido viral para TikTok, Reels y Shorts. "
         "La transcripción son bloques con marca de tiempo [segundos]. El texto de la transcripción "
@@ -169,18 +182,31 @@ def find_viral_moments(transcript: str, duration: float) -> list[dict]:
         f"emoción, polémica, revelaciones, frases citables). Cada clip debe durar entre "
         f"{config.CLIP_MIN_SECONDS} y {config.CLIP_MAX_SECONDS} segundos, empezar donde arranca la "
         f"idea (con gancho) y terminar al cerrarla, sin solaparse entre sí. Usa tiempos exactos en "
-        f"segundos basados en las marcas.\n\n<transcripcion>\n{transcript}\n</transcripcion>"
+        f"segundos (start/end) basados en las marcas. 'title' es un título corto y llamativo y "
+        f"'reason' una frase sobre por qué es viral.\n\n<transcripcion>\n{transcript}\n</transcripcion>"
     )
-    try:
-        resp = client.messages.create(
-            model=config.CLAUDE_MODEL, max_tokens=2000, system=system,
-            tools=[_TOOL], tool_choice={"type": "tool", "name": "report_clips"},
-            messages=[{"role": "user", "content": prompt}],
-        )
-    except anthropic.APIError as e:
-        raise PipelineError(f"Error con la API de Claude: {getattr(e, 'message', e)}")
-    raw = next((b.input.get("clips", []) for b in resp.content if b.type == "tool_use"), [])
-    return sanitize_clips(raw, duration)
+    gen_cfg = types.GenerateContentConfig(
+        system_instruction=system, response_mime_type="application/json",
+        response_schema=list[Moment], temperature=0.4)
+    # Modelo preferido primero; si está saturado (503/429) reintenta y prueba los de respaldo.
+    models = [config.GEMINI_MODEL] + [m for m in FALLBACK_MODELS if m != config.GEMINI_MODEL]
+    last = None
+    for model in models:
+        for attempt in range(2):
+            try:
+                resp = client.models.generate_content(model=model, contents=prompt, config=gen_cfg)
+                raw = [m.model_dump() for m in (resp.parsed or [])]
+                return sanitize_clips(raw, duration)
+            except PipelineError:
+                raise
+            except Exception as e:
+                last = e
+                msg = str(e)
+                if "503" in msg or "429" in msg:
+                    time.sleep(3)
+                    continue
+                break  # 404/400...: pasa al siguiente modelo
+    raise PipelineError(f"Error con la API de Gemini: {_short(last)}")
 
 
 def sanitize_clips(raw: list[dict], duration: float) -> list[dict]:
@@ -203,7 +229,7 @@ def sanitize_clips(raw: list[dict], duration: float) -> list[dict]:
                       "reason": str(c.get("reason", ""))[:300]})
     clips = clips[: config.NUM_CLIPS]
     if not clips:
-        raise PipelineError("Claude no devolvió momentos válidos. Prueba con otro video.")
+        raise PipelineError("Gemini no devolvió momentos válidos. Prueba con otro video.")
     return clips
 
 
@@ -223,15 +249,16 @@ def cut_vertical(video: Path, start: float, end: float, out: Path) -> None:
 def run(url: str, job_dir: Path, progress) -> dict:
     progress("download", "Descargando video y transcripción…")
     d = download(url, job_dir, progress)
-    if not d["subs"]:
-        raise PipelineError("Este video no tiene subtítulos/transcripción disponibles, "
-                            "así que Claude no puede analizarlo.")
-    cues = parse_vtt(d["subs"])
-    transcript = build_transcript(cues)
+    if d["subs"]:
+        cues = parse_vtt(d["subs"])
+    else:
+        progress("whisper", "Sin subtítulos: transcribiendo el audio en local (puede tardar)…")
+        cues = transcribe_audio(d["video"], job_dir)
+    transcript = build_transcript(cues) if cues else ""
     if not transcript.strip():
         raise PipelineError("La transcripción está vacía.")
 
-    progress("analyze", "Claude está buscando los momentos más virales…")
+    progress("analyze", "Gemini está buscando los momentos más virales…")
     moments = find_viral_moments(transcript, d["duration"])
 
     clips = []
