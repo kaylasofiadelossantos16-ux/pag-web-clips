@@ -1,0 +1,36 @@
+# Secretos
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Videos y clips generados
+data/
+downloads/
+clips/
+*.mp4
+*.mkv
+*.webm
+*.mov
+*.m4a
+*.mp3
+*.part
+*.ytdl
+*.vtt
+*.srt
+cookies.txt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+
+# Sistema / editores
+.DS_Store
+.idea/
+.vscode/

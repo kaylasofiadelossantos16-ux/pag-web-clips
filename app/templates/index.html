@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="es" class="bg-slate-950">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clips virales</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen text-slate-100">
+<div class="max-w-5xl mx-auto px-4 py-8">
+  <header class="flex items-center justify-between mb-10">
+    <h1 class="text-2xl font-bold">🎬 Clips virales</h1>
+    <form method="post" action="/logout"><button class="text-sm text-slate-400 hover:text-white">Salir</button></form>
+  </header>
+
+  <form id="form" class="rounded-2xl bg-slate-900 border border-slate-800 p-6 shadow-xl">
+    <label class="block text-sm text-slate-400 mb-2">Enlace de YouTube, Twitch o Kick</label>
+    <div class="flex flex-col sm:flex-row gap-3">
+      <input id="url" type="url" required placeholder="https://www.youtube.com/watch?v=…"
+        class="flex-1 rounded-xl bg-slate-800 border border-slate-700 px-4 py-3 outline-none focus:ring-2 focus:ring-fuchsia-500">
+      <button id="btn" class="rounded-xl bg-gradient-to-r from-fuchsia-600 to-violet-600 px-6 py-3 font-semibold hover:opacity-90 disabled:opacity-50">Generar 5 clips</button>
+    </div>
+    <p id="err" class="hidden mt-3 text-sm text-red-300"></p>
+  </form>
+
+  <div id="status" class="hidden mt-6 rounded-2xl bg-slate-900 border border-slate-800 p-6">
+    <div class="flex items-center gap-3">
+      <div class="h-5 w-5 rounded-full border-2 border-fuchsia-500 border-t-transparent animate-spin"></div>
+      <span id="msg" class="font-medium"></span>
+    </div>
+    <div class="mt-4 h-2 rounded-full bg-slate-800 overflow-hidden"><div id="bar" class="h-full bg-gradient-to-r from-fuchsia-500 to-violet-500 transition-all duration-500" style="width:5%"></div></div>
+  </div>
+
+  <section id="results" class="hidden mt-10">
+    <h2 id="title" class="text-lg font-semibold mb-4"></h2>
+    <div id="grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5"></div>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const PCT = {download: 20, analyze: 55, cut: 80, done: 100};
+const esc = s => Object.assign(document.createElement('div'), {textContent: s}).innerHTML;
+const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+
+function showErr(t){ $('err').textContent = t; $('err').classList.remove('hidden'); }
+
+$('form').addEventListener('submit', async e => {
+  e.preventDefault();
+  $('err').classList.add('hidden'); $('results').classList.add('hidden');
+  $('btn').disabled = true;
+  const r = await fetch('/api/jobs', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({url: $('url').value})});
+  if (r.status === 401) return location.href = '/login';
+  const d = await r.json();
+  if (!r.ok) { showErr(d.error || 'Error'); $('btn').disabled = false; return; }
+  $('status').classList.remove('hidden');
+  poll(d.job_id);
+});
+
+async function poll(id){
+  const r = await fetch('/api/jobs/' + id);
+  if (r.status === 401) return location.href = '/login';
+  const j = await r.json();
+  if (j.status === 'running') {
+    $('msg').textContent = j.message; $('bar').style.width = (PCT[j.step] || 5) + '%';
+    return setTimeout(() => poll(id), 2000);
+  }
+  $('status').classList.add('hidden'); $('btn').disabled = false;
+  if (j.status === 'error') return showErr(j.error);
+  render(id, j);
+}
+
+function render(id, j){
+  $('title').textContent = j.title;
+  $('grid').innerHTML = j.clips.map(c => `
+    <article class="rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden">
+      <video controls preload="metadata" class="w-full aspect-[9/16] bg-black" src="/clips/${id}/${c.n}"></video>
+      <div class="p-4">
+        <h3 class="font-semibold">${c.n}. ${esc(c.title)}</h3>
+        <p class="text-xs text-slate-400 mt-1">${fmt(c.start)} – ${fmt(c.end)} · ${esc(c.reason)}</p>
+        <a href="/clips/${id}/${c.n}?download=true" class="mt-3 block text-center rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 py-2 text-sm font-semibold">Descargar</a>
+      </div>
+    </article>`).join('');
+  $('results').classList.remove('hidden');
+}
+</script>
+</body>
+</html>
