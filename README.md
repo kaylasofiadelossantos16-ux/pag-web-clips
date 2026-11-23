@@ -27,7 +27,7 @@ Abre http://127.0.0.1:8000 e introduce tu `APP_PASSWORD`. Si lo expones a intern
 
 ## Notas
 - Si el video no trae subtítulos, se transcribe el audio en local con faster-whisper (gratis; la primera vez descarga el modelo y en CPU puede tardar).
-- Los directos en emisión se rechazan; usa el VOD cuando termine.
+- Directos en emisión: se graban 15 min **a partir del momento en que envías el enlace** (o hasta 150 MB) y los 5 clips salen de ese fragmento; hay que esperar esos 15 min. Se transcribe con Whisper. Ajustable con `LIVE_RECORD_SECONDS` y `LIVE_MAX_MB`.
 - Procesa un video a la vez. Los clips se guardan en `DATA_DIR` (ignorado por git).
 
 ## Desplegar gratis en Hugging Face Spaces

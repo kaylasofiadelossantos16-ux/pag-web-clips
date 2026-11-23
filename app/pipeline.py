@@ -1,5 +1,6 @@
 """Descarga (yt-dlp) -> análisis (Gemini) -> corte vertical (FFmpeg)."""
 import json
+import os
 import re
 import subprocess
 import time
@@ -49,8 +50,10 @@ def download(url: str, workdir: Path, progress) -> dict:
     except yt_dlp.utils.DownloadError as e:
         raise PipelineError(f"No se pudo leer el enlace: {_short(e)}")
 
+    if info.get("live_status") == "is_upcoming":
+        raise PipelineError("El directo aún no ha empezado.")
     if info.get("is_live"):
-        raise PipelineError("El directo sigue en emisión. Espera a que termine y usa el VOD.")
+        return record_live(url, workdir, progress)
     duration = info.get("duration") or 0
     if duration > config.MAX_VIDEO_MINUTES * 60:
         raise PipelineError(f"El video supera el límite de {config.MAX_VIDEO_MINUTES} minutos.")
@@ -84,6 +87,55 @@ def download(url: str, workdir: Path, progress) -> dict:
         "title": info.get("title") or "video",
         "duration": float(duration or _probe_duration(video)),
     }
+
+
+def record_stream(stream_url: str, headers: dict, out: Path, seconds: int, max_mb: int, progress=None) -> None:
+    """Graba con FFmpeg hasta `seconds` s o `max_mb` MB, lo que ocurra antes (copia directa, sin recodificar)."""
+    hdr = "".join(f"{k}: {v}\r\n" for k, v in (headers or {}).items())
+    cmd = ["ffmpeg", "-y", "-loglevel", "error"]
+    if hdr:
+        cmd += ["-headers", hdr]
+    cmd += ["-i", stream_url, "-t", str(seconds), "-fs", str(max_mb * 1024 * 1024), "-c", "copy", str(out)]
+    env = os.environ.copy()
+    if env.get("HTTPS_PROXY") and not env.get("http_proxy"):
+        env["http_proxy"] = env["HTTPS_PROXY"]
+    start = time.time()
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, env=env)
+    try:
+        while proc.poll() is None:
+            elapsed = time.time() - start
+            if elapsed > seconds + 120:  # el stream se colgó
+                proc.kill()
+                break
+            if progress:
+                progress("record", f"Grabando el directo… {int(elapsed // 60)}:{int(elapsed % 60):02d} de "
+                                   f"{seconds // 60}:{seconds % 60:02d} min")
+            time.sleep(5)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    err = proc.stderr.read()[-200:] if proc.stderr else ""
+    if not out.exists() or out.stat().st_size < 100_000:
+        raise PipelineError(f"No se pudo grabar el directo. {err}".strip())
+
+
+def record_live(url: str, workdir: Path, progress) -> dict:
+    """Directo en emisión: graba ~15 min desde ahora (no descarga 'infinito')."""
+    progress("record", "Directo detectado: obteniendo el stream…")
+    opts = _base_opts() | {"format": "best[height<=720]/best[height<=1080]/best"}
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except yt_dlp.utils.DownloadError as e:
+        raise PipelineError(f"No se pudo abrir el directo: {_short(e)}")
+    stream_url = info.get("url")
+    if not stream_url:
+        raise PipelineError("No se encontró una URL de stream reproducible para este directo.")
+    out = workdir / "source.mkv"
+    record_stream(stream_url, info.get("http_headers"), out, config.LIVE_RECORD_SECONDS,
+                  config.LIVE_MAX_MB, progress)
+    return {"video": out, "subs": None, "title": f"[EN VIVO] {info.get('title') or 'directo'}"[:150],
+            "duration": _probe_duration(out)}
 
 
 def _short(e: Exception) -> str:

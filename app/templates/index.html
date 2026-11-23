@@ -38,7 +38,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const PCT = {download: 20, whisper: 40, analyze: 60, cut: 80, done: 100};
+const PCT = {download: 20, record: 30, whisper: 40, analyze: 60, cut: 80, done: 100};
 const esc = s => Object.assign(document.createElement('div'), {textContent: s}).innerHTML;
 const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
 

@@ -23,6 +23,8 @@ DATA_DIR = Path(os.getenv("DATA_DIR", "data")).resolve()
 MAX_VIDEO_MINUTES = _int("MAX_VIDEO_MINUTES", 180)
 CLIP_MIN_SECONDS = _int("CLIP_MIN_SECONDS", 20)
 CLIP_MAX_SECONDS = _int("CLIP_MAX_SECONDS", 60)
+LIVE_RECORD_SECONDS = _int("LIVE_RECORD_SECONDS", 900)
+LIVE_MAX_MB = _int("LIVE_MAX_MB", 150)
 SUBTITLE_LANGS = [s.strip() for s in os.getenv("SUBTITLE_LANGS", "es,en").split(",") if s.strip()]
 COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax").lower()
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
